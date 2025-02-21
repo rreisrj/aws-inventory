@@ -21,6 +21,7 @@ from .route53 import Route53Component
 from .s3 import S3Component
 from .sns import SNSComponent
 from .sqs import SQSComponent
+from .subnets import SubnetComponent
 from .targetgroup import TargetGroupComponent
 from .unattached_ebs import UnattachedEBSComponent
 from .unattached_eip import UnattachedEIPComponent
@@ -31,8 +32,8 @@ from .vpc import VPCComponent
 __all__ = [
     "APIGatewayComponent",
     "AutoScalingComponent",
-    "DynamoDBComponent",
     "CloudFrontComponent",
+    "DynamoDBComponent",
     "EC2Component",
     "ECRComponent",
     "ECSComponent",
@@ -47,6 +48,7 @@ __all__ = [
     "S3Component",
     "SNSComponent",
     "SQSComponent",
+    "SubnetComponent",
     "TargetGroupComponent",
     "UnattachedEBSComponent",
     "UnattachedSGComponent",
@@ -59,22 +61,23 @@ __all__ = [
 COMPONENT_MAP = {
     "APIGateway": APIGatewayComponent,
     "AutoScaling": AutoScalingComponent,
-    "DynamoDB": DynamoDBComponent,
     "CloudFront": CloudFrontComponent,
+    "DynamoDB": DynamoDBComponent,
     "EC2": EC2Component,
     "ECR": ECRComponent,
     "ECS": ECSComponent,
-    "EFS": EFSComponent,  # Added
+    "EFS": EFSComponent,
     "EKS": EKSComponent,
     "ELB": ELBComponent,
     "Gateway": GatewayComponent,
-    "KMS": KMSComponent,  # Added
+    "KMS": KMSComponent,
     "Lambda": LambdaComponent,
     "RDS": RDSComponent,
     "Route53": Route53Component,
     "S3": S3Component,
     "SNS": SNSComponent,
     "SQS": SQSComponent,
+    "Subnets": SubnetComponent,
     "TargetGroup": TargetGroupComponent,
     "UnattachedEBS": UnattachedEBSComponent,
     "UnattachedSG": UnattachedSGComponent,
@@ -82,6 +85,9 @@ COMPONENT_MAP = {
     "UnattachedENI": UnattachedENIComponent,
     "VPC": VPCComponent,
 }
+
+# Define dependency-related services
+DEPENDENCY_SERVICES = ["Gateway", "ELB", "TargetGroup", "EC2", "EKS", "RDS"]
 
 
 def get_component(service_name: str, session) -> Any:

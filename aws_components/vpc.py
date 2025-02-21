@@ -29,6 +29,20 @@ class VPCComponent:
             ec2 = self.session.client("ec2", region_name=region)
             vpcs = []
 
+            # Get all available AZs in the region
+            try:
+                az_response = ec2.describe_availability_zones()
+                available_azs = {
+                    az["ZoneName"]: {
+                        "State": az["State"],
+                        "ZoneId": az["ZoneId"],
+                        "ZoneType": az.get("ZoneType", "N/A"),
+                    }
+                    for az in az_response["AvailabilityZones"]
+                }
+            except ClientError:
+                available_azs = {}
+
             # Get VPCs
             vpc_paginator = ec2.get_paginator("describe_vpcs")
             for vpc_page in vpc_paginator.paginate():
@@ -43,7 +57,16 @@ class VPCComponent:
                     )
 
                     # Get subnets for this VPC
-                    subnets = []
+                    subnet_names = []
+                    subnet_ids = []
+                    subnet_cidrs = []
+                    subnet_azs = []
+                    subnet_az_ids = []
+                    subnet_az_types = []
+                    subnet_az_states = []
+                    subnet_states = []
+                    subnet_ips = []
+
                     try:
                         subnet_paginator = ec2.get_paginator("describe_subnets")
                         for subnet_page in subnet_paginator.paginate(
@@ -56,24 +79,25 @@ class VPCComponent:
                                         for tag in subnet.get("Tags", [])
                                         if tag["Key"] == "Name"
                                     ),
-                                    "",
+                                    "No Name",
                                 )
-                                subnets.append(
-                                    {
-                                        "SubnetId": subnet["SubnetId"],
-                                        "Name": subnet_name,
-                                        "CIDR": subnet["CidrBlock"],
-                                        "AZ": subnet["AvailabilityZone"],
-                                        "State": subnet["State"],
-                                        "Available IPs": subnet[
-                                            "AvailableIpAddressCount"
-                                        ],
-                                    }
+                                az_name = subnet["AvailabilityZone"]
+                                az_info = available_azs.get(az_name, {})
+
+                                subnet_names.append(subnet_name)
+                                subnet_ids.append(subnet["SubnetId"])
+                                subnet_cidrs.append(subnet["CidrBlock"])
+                                subnet_azs.append(az_name)
+                                subnet_az_ids.append(az_info.get("ZoneId", "N/A"))
+                                subnet_az_types.append(az_info.get("ZoneType", "N/A"))
+                                subnet_az_states.append(az_info.get("State", "N/A"))
+                                subnet_states.append(subnet["State"])
+                                subnet_ips.append(
+                                    str(subnet["AvailableIpAddressCount"])
                                 )
                     except ClientError:
                         pass
 
-                    # [Rest of the VPC code remains the same]
                     vpcs.append(
                         {
                             "Region": region,
@@ -83,11 +107,39 @@ class VPCComponent:
                             "CIDR": vpc["CidrBlock"],
                             "State": vpc["State"],
                             "Is Default": vpc["IsDefault"],
-                            "Subnets": self.format_subnets(subnets),
-                            # [Rest of the fields remain the same]
+                            "Subnet Names": (
+                                "; ".join(subnet_names) if subnet_names else "N/A"
+                            ),
+                            "Subnet IDs": (
+                                "; ".join(subnet_ids) if subnet_ids else "N/A"
+                            ),
+                            "Subnet CIDRs": (
+                                "; ".join(subnet_cidrs) if subnet_cidrs else "N/A"
+                            ),
+                            "Subnet AZs": (
+                                "; ".join(subnet_azs) if subnet_azs else "N/A"
+                            ),
+                            "Subnet AZ IDs": (
+                                "; ".join(subnet_az_ids) if subnet_az_ids else "N/A"
+                            ),
+                            "Subnet AZ Types": (
+                                "; ".join(subnet_az_types) if subnet_az_types else "N/A"
+                            ),
+                            "Subnet AZ States": (
+                                "; ".join(subnet_az_states)
+                                if subnet_az_states
+                                else "N/A"
+                            ),
+                            "Subnet States": (
+                                "; ".join(subnet_states) if subnet_states else "N/A"
+                            ),
+                            "Subnet Available IPs": (
+                                "; ".join(subnet_ips) if subnet_ips else "N/A"
+                            ),
                         }
                     )
 
+            print(f"  Found {len(vpcs)} VPC resources in {region}")
             return vpcs
         except ClientError as e:
             print(f"Error getting VPC resources in {region}: {str(e)}")

@@ -48,27 +48,27 @@ class TargetGroupComponent:
                     # Get tags
                     tags = self.get_target_group_tags(elbv2, target_group_arn)
 
-                    # Format target information
+                    # Format target information into two separate lists
                     target_info = []
+                    target_ports = []
                     for target in targets:
-                        target_data = {
-                            "ID": target.get("Target", {}).get("Id", "N/A"),
-                            "IP": target.get("Target", {}).get("Ip", "N/A"),
-                            "Port": target.get("Target", {}).get("Port", "N/A"),
-                            "Health": target.get("TargetHealth", {}).get(
-                                "State", "N/A"
-                            ),
-                        }
-                        target_info.append(target_data)
+                        # Format target ID/IP and health status
+                        target_id = target.get("Target", {}).get("Id", "N/A")
+                        target_ip = target.get("Target", {}).get("Ip", "N/A")
+                        health_state = target.get("TargetHealth", {}).get(
+                            "State", "N/A"
+                        )
 
-                    # Format targets for better readability
-                    formatted_targets = []
-                    for target in target_info:
-                        target_str = f"ID: {target['ID']}\n"
-                        target_str += f"IP: {target['IP']}\n"
-                        target_str += f"Port: {target['Port']}\n"
-                        target_str += f"Health: {target['Health']}"
-                        formatted_targets.append(target_str)
+                        target_identifier = (
+                            target_id if target_id != "N/A" else target_ip
+                        )
+                        target_info.append(f"{target_identifier} ({health_state})")
+
+                        # Format port information
+                        port = target.get("Target", {}).get("Port", "N/A")
+                        protocol = tg.get("Protocol", "N/A")
+                        if port != "N/A":
+                            target_ports.append(f"{protocol}:{port}")
 
                     # Format tags for better readability
                     formatted_tags = [f"{k}: {v}" for k, v in tags.items()]
@@ -79,8 +79,6 @@ class TargetGroupComponent:
                             "Region": region,
                             "Resource Name": tg.get("TargetGroupName", "N/A"),
                             "Resource ID": target_group_arn,
-                            "Name": tg.get("TargetGroupName", "N/A"),
-                            "ID": target_group_arn,
                             "Protocol": tg.get("Protocol", "N/A"),
                             "Port": tg.get("Port", "N/A"),
                             "VpcId": tg.get("VpcId", "N/A"),
@@ -96,14 +94,18 @@ class TargetGroupComponent:
                             "LoadBalancerArns": "; ".join(
                                 tg.get("LoadBalancerArns", [])
                             ),
-                            "Targets": "\n\n".join(formatted_targets),
+                            "Targets": "\n".join(target_info) if target_info else "N/A",
+                            "Target Ports": (
+                                "\n".join(target_ports) if target_ports else "N/A"
+                            ),
                             "Tags": (
                                 "\n".join(formatted_tags) if formatted_tags else "N/A"
                             ),
                         }
                     )
 
+            print(f"  Found {len(target_groups)} Target Group resources in {region}")
+            return target_groups
         except ClientError as e:
-            print(f"Error collecting Target Group information in {region}: {str(e)}")
-
-        return target_groups
+            print(f"Error getting Target Group resources in {region}: {str(e)}")
+            return []

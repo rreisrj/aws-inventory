@@ -28,31 +28,18 @@ class ELBComponent:
             return {
                 "Listener Protocols": "",
                 "Listener Ports": "",
-                "Target Groups": "",
                 "SSL Certificates": "",
             }
 
         formatted = {
             "Listener Protocols": [],
             "Listener Ports": [],
-            "Target Groups": [],
             "SSL Certificates": [],
         }
 
         for listener in listeners:
             formatted["Listener Protocols"].append(listener.get("Protocol", "N/A"))
             formatted["Listener Ports"].append(str(listener.get("Port", "N/A")))
-
-            # Format target groups
-            if "DefaultActions" in listener:
-                tg_names = []
-                for action in listener["DefaultActions"]:
-                    if action.get("Type") == "forward" and "TargetGroupArn" in action:
-                        tg_name = action["TargetGroupArn"].split(":")[-1]
-                        tg_names.append(tg_name)
-                formatted["Target Groups"].append(",".join(tg_names) or "N/A")
-            else:
-                formatted["Target Groups"].append("N/A")
 
             # Format SSL certificates
             if "Certificates" in listener:
@@ -67,92 +54,77 @@ class ELBComponent:
         return {
             "Listener Protocols": "; ".join(formatted["Listener Protocols"]),
             "Listener Ports": "; ".join(formatted["Listener Ports"]),
-            "Target Groups": "; ".join(formatted["Target Groups"]),
             "SSL Certificates": "; ".join(formatted["SSL Certificates"]),
         }
+
+    def get_target_groups(self, elbv2_client, lb_arn):
+        """Get target groups for a load balancer"""
+        try:
+            tg_paginator = elbv2_client.get_paginator("describe_target_groups")
+            target_groups = []
+            for page in tg_paginator.paginate(LoadBalancerArn=lb_arn):
+                target_groups.extend(page["TargetGroups"])
+            return target_groups
+        except ClientError as e:
+            print(f"Error getting target groups for {lb_arn}: {str(e)}")
+            return []
 
     def get_resources(self, region):
         """Get all types of load balancers with target groups"""
         try:
             resources = []
             elbv2 = self.session.client("elbv2", region_name=region)
-            ec2 = self.session.client("ec2", region_name=region)
+            print(f"Collecting ELB resources in {region}...")
 
-            # Get Application and Network Load Balancers
             paginator = elbv2.get_paginator("describe_load_balancers")
             for page in paginator.paginate():
                 for lb in page["LoadBalancers"]:
-                    # Get listeners and target groups
+                    lb_arn = lb["LoadBalancerArn"]
+
+                    # Get target groups with full details
+                    target_groups = self.get_target_groups(elbv2, lb_arn)
+
+                    # Get listeners
                     listeners = []
                     try:
                         listener_paginator = elbv2.get_paginator("describe_listeners")
                         for listener_page in listener_paginator.paginate(
-                            LoadBalancerArn=lb["LoadBalancerArn"]
+                            LoadBalancerArn=lb_arn
                         ):
-                            for listener in listener_page["Listeners"]:
-                                target_groups = []
-                                for action in listener["DefaultActions"]:
-                                    if "TargetGroupArn" in action:
-                                        try:
-                                            tg_response = elbv2.describe_target_groups(
-                                                TargetGroupArns=[
-                                                    action["TargetGroupArn"]
-                                                ]
-                                            )
-                                            if tg_response["TargetGroups"]:
-                                                tg = tg_response["TargetGroups"][0]
-                                                targets = []
-                                                target_health = (
-                                                    elbv2.describe_target_health(
-                                                        TargetGroupArn=action[
-                                                            "TargetGroupArn"
-                                                        ]
-                                                    )
-                                                )
-
-                                                target_groups.append(
-                                                    {
-                                                        "TargetGroupName": tg[
-                                                            "TargetGroupName"
-                                                        ],
-                                                        "Protocol": tg["Protocol"],
-                                                        "Port": tg["Port"],
-                                                        "TargetType": tg["TargetType"],
-                                                    }
-                                                )
-                                        except ClientError:
-                                            pass
-
-                                listeners.append(
-                                    {
-                                        "Protocol": listener["Protocol"],
-                                        "Port": listener["Port"],
-                                        "TargetGroups": target_groups,
-                                    }
-                                )
+                            listeners.extend(listener_page["Listeners"])
                     except ClientError:
                         pass
 
+                    # Format all information
                     listeners_info = self.format_listeners(listeners)
+                    target_groups_summary = self.format_target_groups(target_groups)
+
+                    # Get target group names and IDs for dependency mapping
+                    tg_names = [tg["TargetGroupName"] for tg in target_groups]
+                    tg_ids = [tg["TargetGroupArn"] for tg in target_groups]
 
                     resources.append(
                         {
                             "Region": region,
                             "Service": "ELB",
                             "Resource Name": lb["LoadBalancerName"],
-                            "Resource ID": lb["LoadBalancerArn"],
+                            "Resource ID": lb_arn,
                             "Type": lb["Type"],
                             "DNS Name": lb["DNSName"],
                             "Scheme": lb["Scheme"],
+                            "VPC ID": lb.get("VpcId", "N/A"),
                             "Listeners": listeners_info["Listener Protocols"]
                             + "; "
                             + listeners_info["Listener Ports"],
-                            "Target Groups": listeners_info["Target Groups"],
                             "SSL Certificates": listeners_info["SSL Certificates"],
+                            "Target Groups": target_groups_summary,
+                            "Target Group Names": "; ".join(tg_names) or "N/A",
+                            "Target Group IDs": "; ".join(tg_ids) or "N/A",
                         }
                     )
 
+            print(f"  Found {len(resources)} ELB resources in {region}")
             return resources
         except ClientError as e:
-            print(f"Error getting ELB resources in {region}: {str(e)}")
+            print(f"Error collecting ELB resources in {region}: {str(e)}")
             return []

@@ -38,8 +38,8 @@ class AWSResourceInventory:
         self.supported_services = [
             "APIGateway",
             "AutoScaling",
-            "DynamoDB",
             "CloudFront",
+            "DynamoDB",
             "EC2",
             "ECR",
             "ECS",
@@ -54,12 +54,22 @@ class AWSResourceInventory:
             "S3",
             "SNS",
             "SQS",
+            "Subnets",  # Changed from "Subnet" to "Subnets" to match COMPONENT_MAP
             "TargetGroup",
             "UnattachedEBS",
             "UnattachedSG",
             "UnattachedEIP",
             "UnattachedENI",
             "VPC",
+        ]
+        # Define dependency-related services
+        self.dependency_services = [
+            "Gateway",
+            "ELB",
+            "TargetGroup",
+            "EC2",
+            "EKS",
+            "RDS",
         ]
         self.components = {}
 
@@ -248,6 +258,36 @@ class AWSResourceInventory:
                 except Exception as e:
                     print(f"Error processing region {region}: {str(e)}")
 
+    def select_services(self, dependency_mode=False):
+        """Let user select which services to scan"""
+        if dependency_mode:
+            print("\nRunning in dependency mapping mode. Will collect these services:")
+            for service in self.dependency_services:
+                print(f"- {service}")
+            return self.dependency_services
+
+        print("\nAvailable services:")
+        for i, service in enumerate(self.supported_services, 1):
+            print(f"{i}. {service}")
+
+        while True:
+            try:
+                selection = input(
+                    "\nEnter service numbers (comma-separated) or 'all': "
+                ).strip()
+                if selection.lower() == "all":
+                    return self.supported_services
+
+                selected_indices = [int(x.strip()) for x in selection.split(",")]
+                selected_services = [
+                    self.supported_services[i - 1]
+                    for i in selected_indices
+                    if 0 < i <= len(self.supported_services)
+                ]
+                return selected_services
+            except (ValueError, IndexError):
+                print("Invalid selection. Please try again.")
+
     def export_to_excel(self, selected_services=None):
         """Export collected resources to Excel"""
         if not self.resources:
@@ -268,16 +308,55 @@ class AWSResourceInventory:
             )
             header_font = Font(color="FFFFFF", bold=True, size=20)
             regular_font = Font(size=20)
-            not_found_fill = PatternFill(
-                start_color="FFE6E6", end_color="FFE6E6", fill_type="solid"
-            )
-            not_found_font = Font(color="FF0000", size=20)
+
+            # Write summary headers
+            summary_headers = ["Service", "Total Resources", "Regions"]
+            for col, header in enumerate(summary_headers, 1):
+                cell = summary_ws.cell(row=1, column=col, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+
+            # Calculate summary data
+            summary_data = {}
+            for region, region_resources in self.resources.items():
+                for resource in region_resources:
+                    service = resource["Service"]
+                    if service not in summary_data:
+                        summary_data[service] = {"count": 0, "regions": set()}
+                    summary_data[service]["count"] += 1
+                    summary_data[service]["regions"].add(region)
+
+            # Write summary data
+            for row, (service, data) in enumerate(sorted(summary_data.items()), 2):
+                # Service name
+                cell = summary_ws.cell(row=row, column=1, value=service)
+                cell.font = regular_font
+
+                # Total resources
+                cell = summary_ws.cell(row=row, column=2, value=data["count"])
+                cell.font = regular_font
+
+                # Regions
+                cell = summary_ws.cell(
+                    row=row, column=3, value=", ".join(sorted(data["regions"]))
+                )
+                cell.font = regular_font
+
+            # Adjust column widths
+            for col in range(1, len(summary_headers) + 1):
+                max_length = 0
+                for row in range(1, summary_ws.max_row + 1):
+                    cell_value = str(summary_ws.cell(row=row, column=col).value)
+                    max_length = max(max_length, len(cell_value))
+                summary_ws.column_dimensions[chr(64 + col)].width = min(
+                    max_length + 2, 50
+                )
 
             # Critical fields that should always appear first
             critical_fields = [
                 "Region",
                 "Service",
-                "Resource Name",
+                "Subnet Name",
                 "Resource ID",
                 "Description",
                 "Creation Time",
@@ -298,9 +377,7 @@ class AWSResourceInventory:
                     continue
 
                 # Create a sheet name that's valid for Excel
-                sheet_name = service.replace(" ", "_")[
-                    :31
-                ]  # Excel limits sheet names to 31 chars
+                sheet_name = service.replace(" ", "_")[:31]
                 ws = wb.create_sheet(sheet_name)
 
                 # Get all headers from data
@@ -321,204 +398,95 @@ class AWSResourceInventory:
                 for row, resource in enumerate(resources, 2):
                     for col, header in enumerate(headers, 1):
                         value = resource.get(header, "")
-                        # Format the value based on the header
-                        if header == "Creation Time" and value:
-                            # Try to format the timestamp if it's not empty
-                            try:
-                                if isinstance(value, str):
-                                    # Remove any timezone info and milliseconds for Excel compatibility
-                                    value = value.split("+")[0].split(".")[0]
-                            except:
-                                pass
-                        elif header in ["Tags", "Security Groups", "Subnets"]:
-                            # Format list-like data for better readability
-                            if isinstance(value, (list, set)):
-                                value = "\n".join(sorted(value))
-                            elif isinstance(value, dict):
-                                value = "\n".join(
-                                    f"{k}={v}" for k, v in sorted(value.items())
-                                )
-
                         cell = ws.cell(row=row, column=col, value=str(value))
                         cell.font = regular_font
 
-                # Auto-adjust column widths
-                for column in ws.columns:
-                    max_length = 0
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min((max_length + 2), 50)
-                    ws.column_dimensions[column[0].column_letter].width = adjusted_width
-
-            # Prepare summary data
-            summary_headers = ["Service", "Region", "Resource Count"]
-            for col, header in enumerate(summary_headers, 1):
-                cell = summary_ws.cell(row=1, column=col, value=header)
-                cell.fill = header_fill
-                cell.font = header_font
-
-            # Write summary data for selected services or all services
-            services_to_summarize = (
-                selected_services if selected_services else self.supported_services
+            # Save the workbook with timestamp
+            output_file = (
+                f"dependencies_aws_inventory_{self.timestamp}.xlsx"
+                if selected_services == self.dependency_services
+                else f"aws_inventory_{self.timestamp}.xlsx"
             )
-            row = 2
-            for service in services_to_summarize:
-                for region in self.regions:
-                    # Count resources for this service and region
-                    count = 0
-                    for region_resources in self.resources.values():
-                        # Count resources matching this service and region
-                        matching_resources = [
-                            r
-                            for r in region_resources
-                            if (
-                                r["Service"] == service
-                                or (
-                                    service == "APIGateway"
-                                    and "API Gateway" in r["Service"]
-                                )
-                                or (service == "Gateway" and r["Service"] == "Gateway")
-                                or (
-                                    service == "CloudFront"
-                                    and r["Service"] == "CloudFront"
-                                )
-                            )
-                            and r["Region"] == region
-                        ]
-                        count += len(matching_resources)
+            try:
+                wb.save(output_file)
+                print(f"\nExcel file saved as: {output_file}")
+                return True
+            except Exception as e:
+                print(f"Error saving Excel file: {str(e)}")
+                return False
 
-                    # Write row with count or "Not Found"
-                    service_cell = summary_ws.cell(row=row, column=1, value=service)
-                    region_cell = summary_ws.cell(row=row, column=2, value=region)
-                    count_cell = summary_ws.cell(
-                        row=row, column=3, value=count if count > 0 else "Not Found"
-                    )
-
-                    # Apply styling
-                    service_cell.font = regular_font
-                    region_cell.font = regular_font
-                    if count == 0:
-                        service_cell.fill = not_found_fill
-                        region_cell.fill = not_found_fill
-                        count_cell.fill = not_found_fill
-                        service_cell.font = not_found_font
-                        region_cell.font = not_found_font
-                        count_cell.font = not_found_font
-                    else:
-                        count_cell.font = regular_font
-
-                    row += 1
-
-            # Auto-adjust summary column widths
-            for column in summary_ws.columns:
-                max_length = 0
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min((max_length + 2), 50)
-                summary_ws.column_dimensions[column[0].column_letter].width = (
-                    adjusted_width
-                )
-
-            # Move summary sheet to first position
-            wb.move_sheet("Summary", offset=-len(wb.sheetnames))
-
-            # Save the workbook
-            file_name = f"aws_inventory_{self.account_id}_{self.timestamp}.xlsx"
-            wb.save(file_name)
-            print(f"\nInventory saved to {file_name}")
-            print("Sheets created:")
-            for sheet in wb.sheetnames:
-                print(f"- {sheet}")
-            return True
-        except PermissionError:
-            print(
-                f"\nError: Unable to save file. The file may be open in another program."
-            )
-            return False
         except Exception as e:
-            print(f"\nError saving Excel file: {str(e)}")
+            print(f"Error creating Excel file: {str(e)}")
             return False
 
 
 def main():
-    try:
-        # Create inventory instance
-        inventory = AWSResourceInventory()
-        print("\nAWS Resource Inventory Collector")
+    """Main function"""
+    import argparse
 
-        # Get AWS profile
-        profile = inventory.get_aws_profile()
+    inventory = AWSResourceInventory()
 
-        # Initialize session with selected profile
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="AWS Resource Inventory Tool")
+    parser.add_argument(
+        "--dependencies", action="store_true", help="Run in dependency mapping mode"
+    )
+    parser.add_argument(
+        "--profile",
+        help="AWS profile to use. If not specified, will prompt for selection",
+    )
+    args = parser.parse_args()
+
+    # Get AWS profile
+    profile = args.profile if args.profile else inventory.get_aws_profile()
+    if not profile:
+        print("No AWS profile selected. Exiting.")
+        sys.exit(1)
+
+    # Initialize AWS session
+    if not inventory.initialize_session(profile):
+        print("Failed to initialize AWS session. Exiting.")
+        sys.exit(1)
+
+    # Select regions
+    inventory.select_regions()
+
+    # Initialize components
+    inventory.initialize_components()
+
+    # Select services based on mode
+    selected_services = inventory.select_services(args.dependencies)
+
+    # Collect resources
+    print("\nCollecting resources...")
+    inventory.collect_resources(selected_services)
+
+    # Export to Excel
+    if args.dependencies:
+        inventory_file = f"dependencies_aws_inventory_{inventory.timestamp}.xlsx"
+    else:
+        inventory_file = f"aws_inventory_{inventory.timestamp}.xlsx"
+    print(f"\nExporting inventory to {inventory_file}...")
+    success = inventory.export_to_excel(selected_services)
+
+    # If in dependencies mode and export was successful, create dependency mapping
+    if args.dependencies and success:
+        from aws_dependency_mapper import AWSDependencyMapper
+
+        dependency_file = f"dependencies_aws_topology_{inventory.timestamp}.xlsx"
+        print(f"\nGenerating dependency mapping to {dependency_file}...")
         try:
-            session = boto3.Session(profile_name=profile)
-            sts = session.client("sts")
-            account_id = sts.get_caller_identity()["Account"]
-            print(f"\nUsing profile {profile!r}")
-            inventory.session = session
-            inventory.account_id = account_id
-            inventory.initialize_components()  # Initialize components after session
-        except (
-            botocore.exceptions.ProfileNotFound,
-            botocore.exceptions.ClientError,
-        ) as e:
-            print(f"\nProfile {profile!r} not found or invalid")
-            sys.exit(1)
+            mapper = AWSDependencyMapper(inventory_file)
+            mapper.export_dependencies(dependency_file)
+            print(f"Dependency mapping has been exported to {dependency_file}")
+        except Exception as e:
+            print(f"Error generating dependency mapping: {str(e)}")
+            print("The inventory file was still created successfully.")
 
-        print(f"\nConnected to AWS Account: {account_id}")
-
-        # Select regions
-        inventory.select_regions()
-
-        # Show available services and let user select
-        print("\nAvailable services:")
-        for i, service in enumerate(inventory.supported_services, 1):
-            print(f"{i}. {service}")
-
-        print(
-            "\nSelect services to scan (comma-separated numbers, or 'all' for all services)"
-        )
-        selected_services = None
-        while True:
-            selection = input("\nEnter selection: ").strip().lower()
-            if selection == "all":
-                break
-            try:
-                indices = [int(x.strip()) for x in selection.split(",")]
-                selected_services = [
-                    inventory.supported_services[i - 1]
-                    for i in indices
-                    if 0 < i <= len(inventory.supported_services)
-                ]
-                break
-            except (ValueError, IndexError):
-                print("\nInvalid selection. Please try again.")
-
-        # Collect resources
-        print("\nCollecting resources...")
-        inventory.collect_resources(selected_services)
-
-        # Export to Excel
-        print("\nExporting to Excel...")
-        if inventory.export_to_excel(selected_services):
-            print("\nExport completed successfully!")
-        else:
-            print("\nExport failed.")
-
-    except KeyboardInterrupt:
-        print("\n\nOperation cancelled by user.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\nUnexpected error: {str(e)}")
-        sys.exit(1)
+    if success:
+        print("\nInventory process completed successfully!")
+    else:
+        print("\nInventory export failed.")
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ class AWSResourceInventory:
             "APIGateway",
             "AutoScaling",
             "DynamoDB",
-            "CloudFront",  # Fixed capitalization
+            "CloudFront",
             "EC2",
             "ECR",
             "ECS",
@@ -54,6 +54,7 @@ class AWSResourceInventory:
             "S3",
             "SNS",
             "SQS",
+            "TargetGroup",
             "UnattachedEBS",
             "UnattachedSG",
             "UnattachedEIP",

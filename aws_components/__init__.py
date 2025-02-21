@@ -21,6 +21,7 @@ from .route53 import Route53Component
 from .s3 import S3Component
 from .sns import SNSComponent
 from .sqs import SQSComponent
+from .targetgroup import TargetGroupComponent
 from .unattached_ebs import UnattachedEBSComponent
 from .unattached_eip import UnattachedEIPComponent
 from .unattached_eni import UnattachedENIComponent
@@ -46,6 +47,7 @@ __all__ = [
     "S3Component",
     "SNSComponent",
     "SQSComponent",
+    "TargetGroupComponent",
     "UnattachedEBSComponent",
     "UnattachedSGComponent",
     "UnattachedEIPComponent",
@@ -73,6 +75,7 @@ COMPONENT_MAP = {
     "S3": S3Component,
     "SNS": SNSComponent,
     "SQS": SQSComponent,
+    "TargetGroup": TargetGroupComponent,
     "UnattachedEBS": UnattachedEBSComponent,
     "UnattachedSG": UnattachedSGComponent,
     "UnattachedEIP": UnattachedEIPComponent,
